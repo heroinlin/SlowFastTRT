@@ -1,0 +1,9 @@
+
+DATA:
+  NUM_FRAMES: 32
+  SAMPLING_RATE: 3
+  TEST_CROP_SIZE: 256
+MODEL:
+  NUM_CLASSES: 20
+TEST:
+  CHECKPOINT_FILE_PATH: "checkpoints/checkpoint_epoch_00050.pyth"
