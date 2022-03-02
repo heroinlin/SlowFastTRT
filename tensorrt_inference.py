@@ -36,9 +36,10 @@ class TrtInference(object):
             self.context = self.engine.create_execution_context()
             self.stream = cuda.Stream()
             for index, binding in enumerate(self.engine):
-                batch_shape = list(self.engine.get_binding_shape(binding)).copy()
-                batch_shape[0] = self._batch_size
-                self.context.set_binding_shape(index, batch_shape)
+                if self.engine.binding_is_input(binding):
+                    batch_shape = list(self.engine.get_binding_shape(binding)).copy()
+                    batch_shape[0] = self._batch_size
+                    self.context.set_binding_shape(index, batch_shape)
             self.host_inputs, self.host_outputs, self.cuda_inputs, self.cuda_outputs, self.bindings = self._allocate_buffers()
         except Exception as e:
             raise RuntimeError('fail to allocate CUDA resources') from e
