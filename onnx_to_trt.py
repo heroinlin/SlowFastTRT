@@ -9,10 +9,39 @@ trt_runtime = trt.Runtime(TRT_LOGGER)
 """SlowFast onnx模型转trt模型"""
 
 
-def build_engine(onnx_path, shapes):
+def build_engine_trt8(onnx_path, shapes, precision_mode=True, max_batch_size=8):
+    with trt.Builder(TRT_LOGGER) as builder, builder.create_network(
+            1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+    ) as network, trt.OnnxParser(network, TRT_LOGGER) as parser:
+        config = builder.create_builder_config()
+        profile = builder.create_optimization_profile()
+        if precision_mode:
+            config.set_flag(trt.BuilderFlag.FP16)
+        config.max_workspace_size = 16 * (1 << 20)
+        with open(onnx_path, 'rb') as model:
+            parser.parse(model.read())
+        for idx in range(len(shapes)):
+            shapes[idx][0] = 1
+            dynamic_shape = shapes[idx].copy()
+            max_batch_shape = shapes[idx].copy()
+            dynamic_shape[0] = -1
+            max_batch_shape[0] = max_batch_size
+            network.get_input(idx).shape = dynamic_shape
+            profile.set_shape(
+                network.get_input(idx).name, shapes[idx], shapes[idx],
+                max_batch_shape)
+        network.get_output(0).shape[0] = -1
+        print(network.get_output(0).shape)
+        config.add_optimization_profile(profile)
+        engine = builder.build_engine(network, config)
+        return engine
+
+
+def build_engine_trt7(onnx_path, shapes, precision_mode=True):
     with trt.Builder(TRT_LOGGER) as builder, builder.create_network(
             1) as network, trt.OnnxParser(network, TRT_LOGGER) as parser:
-        builder.fp16_mode = True
+        #if builder.platform_has_fast_fp16 and precision_mode == 16:
+        builder.fp16_mode = precision_mode
         builder.max_workspace_size = 16 * (1 << 20)
         with open(onnx_path, 'rb') as model:
             parser.parse(model.read())
@@ -20,6 +49,13 @@ def build_engine(onnx_path, shapes):
             network.get_input(idx).shape = shapes[idx]
         engine = builder.build_cuda_engine(network)
         return engine
+
+
+def build_engine(onnx_path, shapes, precision_mode=True, max_batch_size=8):
+    if trt.__version__ > "8.0.0.0":
+        return build_engine_trt8(onnx_path, shapes, precision_mode, max_batch_size)
+    else:
+        return build_engine_trt7(onnx_path, shapes, precision_mode)
 
 
 def save_engine(engine, file_name):

@@ -71,8 +71,13 @@ def main():
         inputs = [slow_pathway, fast_pathway]
         for p in model.parameters():
             p.requires_grad = False
-
-        torch.onnx.export(model, inputs, save_checkpoint_file, opset_version=12)
+        dynamic_axes = {
+            'slowpath': [0],
+            'fastpath': [0],
+            'output': [0],
+        }  #数字0，1等是指张量的维度，表示哪个维度需要动态输入
+        torch.onnx.export(model, inputs, save_checkpoint_file, input_names=['slowpath', 'fastpath'],
+                      output_names=['output'], opset_version=12, dynamic_axes=dynamic_axes)
         onnx_check()
 
 

@@ -18,6 +18,7 @@ working_root = os.path.split(os.path.realpath(__file__))[0]
 
 
 class TrtInference(object):
+    _batch_size = 1
     def __init__(self, model_path=None, cuda_ctx=None):
         self._model_path = model_path
         if self._model_path is None:
@@ -34,6 +35,10 @@ class TrtInference(object):
         try:
             self.context = self.engine.create_execution_context()
             self.stream = cuda.Stream()
+            for index, binding in enumerate(self.engine):
+                batch_shape = list(self.engine.get_binding_shape(binding)).copy()
+                batch_shape[0] = self._batch_size
+                self.context.set_binding_shape(index, batch_shape)
             self.host_inputs, self.host_outputs, self.cuda_inputs, self.cuda_outputs, self.bindings = self._allocate_buffers()
         except Exception as e:
             raise RuntimeError('fail to allocate CUDA resources') from e
@@ -51,8 +56,17 @@ class TrtInference(object):
     def _allocate_buffers(self):
         host_inputs, host_outputs, cuda_inputs, cuda_outputs, bindings = \
             [], [], [], [], []
-        for binding in self.engine:
-            size = trt.volume(self.engine.get_binding_shape(binding)) * \
+        for index, binding in enumerate(self.engine):
+            # print(binding)
+            # if self.engine.binding_is_input(binding):
+            #     print("input: ", self.engine.get_binding_name(index))
+            #     print("engine: ", self.engine.get_binding_shape(binding))
+            #     print("context: ", self.context.get_binding_shape(index))
+            # else:
+            #     print("output: ", self.engine.get_binding_name(index))
+            #     print("engine: ", self.engine.get_binding_shape(binding))
+            #     print("context: ", self.context.get_binding_shape(index))
+            size = trt.volume(self.context.get_binding_shape(index)) * \
                    self.engine.max_batch_size
             host_mem = cuda.pagelocked_empty(size, np.float32)
             cuda_mem = cuda.mem_alloc(host_mem.nbytes)
@@ -103,6 +117,7 @@ class SlowFastTRT(TrtInference):
     _img_size = 256
     _mean = [0.45, 0.45, 0.45]
     _std = [0.225, 0.225, 0.225]
+    _batch_size = 1
     def __init__(self, model_path=None, cuda_ctx=None):
         """Initialize TensorRT plugins, engine and conetxt."""
         self._show = False
@@ -152,25 +167,33 @@ class SlowFastTRT(TrtInference):
         first_pathway = np.expand_dims(first_pathway, axis=0)
         socond_pathway = np.array(frames).transpose(3, 0, 1, 2)
         socond_pathway = np.expand_dims(socond_pathway, axis=0)
+        #  *****  debug code to dynamic_batch_size ******
+        first_pathway = np.vstack([first_pathway]*self._batch_size)
+        socond_pathway = np.vstack([socond_pathway]*self._batch_size)
+        #  *****  debug code to dynamic_batch_size ******
         # print(first_pathway.shape, socond_pathway.shape)
         inputs = [first_pathway, socond_pathway]
         return inputs
 
     def _postprocess_trt(self, preds):
-        """Postprocess TRT Yolov5 output."""
-        pred_class_id_list = list(np.argsort(-preds))
-        # print(pred_class_id_list)
+        """Postprocess TRT Slowfast output."""
         results = []
-        for idx in pred_class_id_list:
-            if self._filters is None:
-                results.append({
-                                "name":self._names[idx],
-                                "score":round(float(preds[idx]), 2)})
-            else:
-                if self._names[idx] in self._filters:
-                    results.append({
+        preds = np.reshape(preds, (self._batch_size, -1))
+        for pred in preds:
+            pred_class_id_list = list(np.argsort(-pred))
+            # print(pred_class_id_list)
+            result = []
+            for idx in pred_class_id_list:
+                if self._filters is None:
+                    result.append({
                                     "name":self._names[idx],
-                                    "score":round(float(preds[idx]), 2)})
+                                    "score":round(float(pred[idx]), 2)})
+                else:
+                    if self._names[idx] in self._filters:
+                        result.append({
+                                        "name":self._names[idx],
+                                        "score":round(float(pred[idx]), 2)})
+            results.append(result)
         return results
 
     def classify(self, filename=None):
